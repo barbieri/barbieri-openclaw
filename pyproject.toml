@@ -1,0 +1,98 @@
+[project]
+name = "barbieri-openclaw"
+version = "0.1.0"
+description = "Reusable OpenClaw automations and skills."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.14"
+dependencies = [
+    "detect-secrets==1.5.0",
+    "phonenumbers>=9.0.0",
+]
+keywords = ["openclaw", "automation", "calendar", "open-finance", "slack"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Office/Business",
+  "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/barbieri/barbieri-openclaw"
+Repository = "https://github.com/barbieri/barbieri-openclaw"
+Issues = "https://github.com/barbieri/barbieri-openclaw/issues"
+
+[project.scripts]
+daily-calendar = "daily_calendar.cli:main"
+openfinance-patterns = "openfinance_tools.patterns:main"
+openfinance-summary = "openfinance_tools.summary:main"
+slack-summary = "slack_summary.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+  "pre-commit>=4.0",
+  "pytest>=8.0",
+  "ruff>=0.12.0",
+]
+
+[tool.pytest.ini_options]
+addopts = [
+  "--import-mode=importlib",
+]
+pythonpath = [
+  "skills/daily-calendar/src",
+  "skills/openfinance/src",
+  "skills/slack-summary/src",
+]
+testpaths = [
+  "scripts/tests",
+  "skills/daily-calendar/tests",
+  "skills/openfinance/tests",
+  "skills/slack-summary/tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "I",
+  "B",
+  "UP",
+  "SIM",
+]
+
+[tool.setuptools.packages.find]
+where = [
+  "skills/daily-calendar/src",
+  "skills/openfinance/src",
+  "skills/slack-summary/src",
+]
+
+[tool.setuptools.data-files]
+"share/barbieri-openclaw/skills/daily-calendar" = [
+  "skills/daily-calendar/README.md",
+  "skills/daily-calendar/SKILL.md",
+]
+"share/barbieri-openclaw/skills/daily-calendar/examples" = [
+  "skills/daily-calendar/examples/holidays-br-sp-2026-2027.json",
+]
+"share/barbieri-openclaw/skills/openfinance" = [
+  "skills/openfinance/README.md",
+  "skills/openfinance/SKILL.md",
+]
+"share/barbieri-openclaw/skills/slack-summary" = [
+  "skills/slack-summary/README.md",
+  "skills/slack-summary/SKILL.md",
+]
