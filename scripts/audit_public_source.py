@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import json
+import os
 import re
 import subprocess
 import sys
@@ -37,6 +39,219 @@ PUBLIC_GITHUB_PATHS = {
     "/openclaw/gogcli",
     "/openclaw/slacrawl",
     "/pre-commit/pre-commit-hooks",
+}
+VENDORED_PUBLIC_URL_HOSTS = {
+    "cdn.jsdelivr.net",
+    "cdn.tailwindcss.com",
+    "dashboard.stripe.com",
+    "github.com",
+    "gitlab.com",
+    "localhost",
+    "reddit.com",
+    "www.aihero.dev",
+}
+# Explicitly reviewed dotted references in the pinned upstream skill copies.
+VENDORED_PUBLIC_BARE_HOSTS = {
+    "0001-event-sourced-orders.md",
+    "0001-slug.md",
+    "0002-postgres-for-write-model.md",
+    "0002-slug.md",
+    "adr-format.md",
+    "agent-brief.md",
+    "agents.md",
+    "asd-ste100.org",
+    "authclient.refresh",
+    "authoring-a-skill.md",
+    "autonomous-run.md",
+    "autopilot-full.md",
+    "autopilot-stack.md",
+    "babysit.md",
+    "bad.tsv",
+    "bootstrap.ts",
+    "budget.json",
+    "budget.mjs",
+    "bug-fix.md",
+    "bugbot-triage.md",
+    "bun.lock",
+    "bun.lockb",
+    "cart.add",
+    "cart.total",
+    "check-plan.mjs",
+    "check.bucket",
+    "check.state",
+    "children.tsv",
+    "claude.md",
+    "cli.ts",
+    "client.charge",
+    "client.ts",
+    "code-quality-review.md",
+    "command.slice",
+    "comment.author",
+    "comment.author.login",
+    "comment.body",
+    "comment.createdat",
+    "comment.line",
+    "comment.path",
+    "commits.nodes",
+    "contexts.nodes",
+    "contexts.pageinfo",
+    "contexts.pageinfo.endcursor",
+    "contexts.pageinfo.hasnextpage",
+    "contributing.md",
+    "dark-mode.md",
+    "decision.tsv",
+    "decisions.tsv",
+    "deepening.md",
+    "dependency-cruiser.cjs",
+    "dependency-cruiser.config.cjs",
+    "design-it-twice.md",
+    "design-red-flags.md",
+    "developers.google.com",
+    "diataxis.fr",
+    "divergent-reviewer.md",
+    "domain.md",
+    "env.example",
+    "eval.md",
+    "example.com",
+    "example.test.ts",
+    "explainer-prompt.md",
+    "explorer-prompt.md",
+    "explorer.exe",
+    "fakes.test-helper.ts",
+    "feature.md",
+    "frontier.json",
+    "gates.md",
+    "git-history-cleanup-after.diff",
+    "git-history-cleanup-target.diff",
+    "github.com",
+    "github.ts",
+    "gitlab.com",
+    "glossary-format.md",
+    "glossary-map.md",
+    "glossary.md",
+    "graphql-api.md",
+    "gt-output.txt",
+    "handler.ts",
+    "hillclimb.md",
+    "hitl-loop.template.sh",
+    "html-report.md",
+    "hunk.patch",
+    "impl.ts",
+    "index.ts",
+    "investigation.md",
+    "issue-tracker-github.md",
+    "issue-tracker-gitlab.md",
+    "issue-tracker-local.md",
+    "issue-tracker.md",
+    "items.reduce",
+    "jest.mock",
+    "json.gz",
+    "judgment-reviewer.md",
+    "lead-judgment.md",
+    "learning-record-format.md",
+    "ledger.tsv",
+    "live.md",
+    "logic.md",
+    "main.js",
+    "main.txt",
+    "map.md",
+    "mermaid.initialize",
+    "message.content",
+    "mission-format.md",
+    "mission.md",
+    "mocking.md",
+    "mockpayment.process",
+    "module.exports",
+    "multi-phase-plan.md",
+    "notes.md",
+    "object.author",
+    "opening-a-pr.md",
+    "orch.lock",
+    "orch.ts",
+    "orchestrate.md",
+    "order.total",
+    "out-of-scope.md",
+    "overview.md",
+    "package-lock.json",
+    "package.json",
+    "pause-safely.md",
+    "payload.json",
+    "paymentclient.charge",
+    "paymentservice.process",
+    "perf-issue.md",
+    "performance.now",
+    "phase-boundaries.md",
+    "plan.md",
+    "plugin-system.md",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "policy.ts",
+    "preferences.md",
+    "process.argv.slice",
+    "process.env",
+    "process.exitcode",
+    "prototype.md",
+    "pstack-models.mdc",
+    "rationale-template.md",
+    "readme.md",
+    "refactoring.md",
+    "render.ts",
+    "request.baserefname",
+    "request.headrefname",
+    "request.headrefoid",
+    "request.isdraft",
+    "request.mergeable",
+    "request.mergedat",
+    "request.mergestatestatus",
+    "request.reviewdecision",
+    "request.state",
+    "resources-format.md",
+    "resources.md",
+    "result.status",
+    "resume.md",
+    "retrieved.name",
+    "reviewer-prompt.md",
+    "reviewthreads.nodes",
+    "router.replace",
+    "rubric.md",
+    "runner-prompt.md",
+    "runtime-forensics.md",
+    "searchparams.get",
+    "server.ts",
+    "session-pickup.md",
+    "session.tsx",
+    "shipping.md",
+    "show-me.ts",
+    "skill-mechanics.md",
+    "skill.md",
+    "skill.ts",
+    "spec.md",
+    "state.vscdb.backup",
+    "status.md",
+    "store.ts",
+    "stream.ts",
+    "synthesizer.md",
+    "template.sh",
+    "tests.md",
+    "thread.comments.nodes",
+    "thread.id",
+    "thread.isresolved",
+    "tooling-reviewer.md",
+    "trace-forensics.md",
+    "transport.ts",
+    "triage-labels.md",
+    "tsconfig.json",
+    "types.ts",
+    "units.tsv",
+    "user.email",
+    "user.id",
+    "user.name",
+    "verdict.queue.map",
+    "verify.md",
+    "visual-parity.md",
+    "worktree-audit.sh",
+    "worktree-cleanup.md",
+    "yarn.lock",
 }
 HOSTNAME_PATTERN = re.compile(
     r"\b[A-Za-z0-9-]{3,}(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,63}\b",
@@ -188,7 +403,28 @@ def contains_unapproved_url(value: str, *, allow_synthetic: bool) -> bool:
     return False
 
 
-def find_violations(path: Path) -> list[str]:
+def contains_unapproved_vendor_url(value: str) -> bool:
+    for match in URL_PATTERN.finditer(value):
+        url = match.group().rstrip(".,;:!?)]}")
+        hostname = (urlsplit(url).hostname or "").casefold()
+        if hostname in VENDORED_PUBLIC_URL_HOSTS or hostname == "example.com":
+            continue
+        if hostname.endswith(".example.com"):
+            continue
+        return True
+    return False
+
+
+def contains_unapproved_vendor_hostname(value: str) -> bool:
+    for match in HOSTNAME_PATTERN.finditer(value):
+        hostname = match.group().casefold()
+        if hostname in VENDORED_PUBLIC_BARE_HOSTS:
+            continue
+        return True
+    return False
+
+
+def find_violations(path: Path, *, allow_public_references: bool = False) -> list[str]:
     violations: list[str] = []
     try:
         display_path = path.relative_to(SOURCE_ROOT)
@@ -216,18 +452,39 @@ def find_violations(path: Path) -> list[str]:
     for line_number, line in enumerate(source_lines, start=1):
         if line_number in allowed_fixture_lines:
             continue
-        if contains_unapproved_url(line, allow_synthetic=allow_synthetic):
+        url_is_unapproved = (
+            contains_unapproved_vendor_url(line)
+            if allow_public_references
+            else contains_unapproved_url(line, allow_synthetic=allow_synthetic)
+        )
+        if url_is_unapproved:
             violations.append(f"{display_path}:{line_number}: hardcoded URL")
         for label, pattern in FORBIDDEN_PATTERNS.items():
-            if pattern.search(line):
+            matches = pattern.finditer(line)
+            if label == "email address" and allow_public_references:
+                matches = (
+                    match
+                    for match in matches
+                    if match.group().rsplit("@", 1)[-1].casefold() != "example.com"
+                    and match.group().casefold() != "git@github.com"
+                )
+            if any(matches):
                 violations.append(f"{display_path}:{line_number}: hardcoded {label}")
-        if not is_python and "http://" not in line.casefold() and "https://" not in line.casefold():
-            hostname_text = (
-                line
-                if path.suffix in {"", ".md", ".txt"}
-                else " ".join(re.findall(r'["\u0027]([^"\u0027]+)["\u0027]', line))
+        if not is_python:
+            if path.suffix in {"", ".md", ".txt", ".sh", ".bash"}:
+                hostname_text = line
+            else:
+                quoted = re.findall(r'["\u0027]([^"\u0027]+)["\u0027]', line)
+                hostname_text = " ".join(quoted)
+            if allow_public_references:
+                hostname_text = FORBIDDEN_PATTERNS["email address"].sub("", hostname_text)
+            hostname_text = URL_PATTERN.sub("", hostname_text)
+            hostname_is_unapproved = (
+                contains_unapproved_vendor_hostname(hostname_text)
+                if allow_public_references
+                else contains_hostname(hostname_text)
             )
-            if contains_hostname(hostname_text):
+            if hostname_is_unapproved:
                 violations.append(f"{display_path}:{line_number}: hardcoded hostname")
 
     if not is_python:
@@ -240,9 +497,18 @@ def find_violations(path: Path) -> list[str]:
                 for label, pattern in FORBIDDEN_PATTERNS.items():
                     if pattern.search(literal):
                         violations.append(f"{display_path}:{node.lineno}: hardcoded {label}")
-                if contains_unapproved_url(literal, allow_synthetic=allow_synthetic):
+                url_is_unapproved = (
+                    contains_unapproved_vendor_url(literal)
+                    if allow_public_references
+                    else contains_unapproved_url(literal, allow_synthetic=allow_synthetic)
+                )
+                if url_is_unapproved:
                     violations.append(f"{display_path}:{node.lineno}: hardcoded URL")
-                if is_production_python and contains_hostname(literal):
+                if is_production_python and (
+                    contains_unapproved_vendor_hostname(literal)
+                    if allow_public_references
+                    else contains_hostname(literal)
+                ):
                     violations.append(f"{display_path}:{node.lineno}: hardcoded hostname")
                 if ID_VALUE_PATTERN.fullmatch(literal):
                     violations.append(f"{display_path}:{node.lineno}: hardcoded ID")
@@ -309,6 +575,11 @@ def find_violations(path: Path) -> list[str]:
 
 def public_paths(root: Path = SOURCE_ROOT) -> list[Path]:
     if (root / ".git").exists():
+        # Commit hooks can point GIT_INDEX_FILE at this repository's staged index.
+        # A nested temporary repository must use its own index and work tree.
+        git_env = os.environ.copy()
+        for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
+            git_env.pop(name, None)
         result = subprocess.run(
             [
                 "git",
@@ -322,6 +593,7 @@ def public_paths(root: Path = SOURCE_ROOT) -> list[Path]:
             ],
             capture_output=True,
             check=True,
+            env=git_env,
         )
         candidates = [root / path for path in result.stdout.decode().split("\0") if path]
     else:
@@ -337,9 +609,33 @@ def public_paths(root: Path = SOURCE_ROOT) -> list[Path]:
     return paths
 
 
+def audit_paths(root: Path = SOURCE_ROOT) -> list[str]:
+    lock_path = root / "skills-lock.json"
+    locked_skills = set()
+    if lock_path.is_file():
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        locked_skills = {
+            re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")
+            for name, entry in lock.get("skills", {}).items()
+            if entry.get("sourceType") == "github"
+            and not entry.get("source", "").startswith("barbieri/")
+        }
+
+    violations = []
+    for path in sorted(public_paths(root)):
+        relative = path.relative_to(root)
+        # Allow approved upstream examples, but scan other hosts and secrets.
+        allow_public_references = (
+            len(relative.parts) >= 4
+            and relative.parts[:2] == (".agents", "skills")
+            and relative.parts[2] in locked_skills
+        )
+        violations.extend(find_violations(path, allow_public_references=allow_public_references))
+    return violations
+
+
 def main() -> int:
-    paths = public_paths()
-    violations = [violation for path in sorted(paths) for violation in find_violations(path)]
+    violations = audit_paths()
     if not violations:
         return 0
     print("\n".join(violations), file=sys.stderr)
