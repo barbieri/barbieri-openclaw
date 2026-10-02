@@ -1,9 +1,10 @@
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from scripts.audit_public_source import find_violations, public_paths
+from scripts.audit_public_source import audit_paths, find_violations, public_paths
 
 
 @pytest.mark.parametrize(
@@ -154,7 +155,13 @@ def test_private_urls_are_rejected_in_repository_text(tmp_path: Path, suffix: st
     assert any("hardcoded URL" in item for item in find_violations(source_path))
 
 
-def test_public_paths_follow_git_ignore_without_skipping_dot_directories(tmp_path: Path) -> None:
+def test_public_paths_follow_git_ignore_without_skipping_dot_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A commit hook can export pointers to the parent repository. Initialize
+    # the fixture independently, then verify the scanner ignores such pointers.
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_PREFIX"):
+        monkeypatch.delenv(name, raising=False)
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (tmp_path / ".gitignore").write_text("node_modules/\nreports/\n", encoding="utf-8")
     security_path = tmp_path / ".github" / "SECURITY.md"
@@ -164,7 +171,98 @@ def test_public_paths_follow_git_ignore_without_skipping_dot_directories(tmp_pat
     ignored_path.parent.mkdir(parents=True)
     ignored_path.write_text("# Dependency\n", encoding="utf-8")
 
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "not-a-repository"))
     paths = public_paths(tmp_path)
 
     assert security_path in paths
     assert ignored_path not in paths
+
+
+def test_locked_skill_public_references_do_not_hide_sensitive_values(tmp_path: Path) -> None:
+    (tmp_path / "skills-lock.json").write_text(
+        json.dumps({"skills": {"demo": {"source": "mattpocock/skills", "sourceType": "github"}}}),
+        encoding="utf-8",
+    )
+    skill = tmp_path / ".agents" / "skills" / "demo" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(
+        (
+            "https://docs.example.com\n"  # audit: allow-fixture
+            "git@github.com\n"  # audit: allow-fixture
+            "person@example.com\n"  # audit: allow-fixture
+            "person@private.test\n"  # audit: allow-fixture
+            "person@github.com\n"  # audit: allow-fixture
+            "/home/person/config\n"  # audit: allow-fixture
+            "https://private-host.example.net/secret\n"  # audit: allow-fixture
+            "internal.example.net\n"  # audit: allow-fixture
+            "private.company.finance\n"  # audit: allow-fixture
+        ),
+        encoding="utf-8",
+    )
+    unlisted = tmp_path / ".agents" / "skills" / "unlisted" / "SKILL.md"
+    unlisted.parent.mkdir(parents=True)
+    unlisted.write_text("https://docs.example.com\n", encoding="utf-8")  # audit: allow-fixture
+
+    violations = audit_paths(tmp_path)
+
+    assert sum("hardcoded URL" in item for item in violations) == 2
+    assert sum("hardcoded hostname" in item for item in violations) == 2
+    assert sum("hardcoded email address" in item for item in violations) == 2
+    assert any("hardcoded user home path" in item for item in violations)
+
+
+def test_owned_locked_skill_keeps_full_url_scan(tmp_path: Path) -> None:
+    (tmp_path / "skills-lock.json").write_text(
+        json.dumps(
+            {
+                "skills": {
+                    "owned": {
+                        "source": "barbieri/barbieri-playground",
+                        "sourceType": "github",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    skill = tmp_path / ".agents" / "skills" / "owned" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("https://private-host.example.net\n", encoding="utf-8")  # audit: allow-fixture
+
+    assert any("hardcoded URL" in item for item in audit_paths(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("filename", "source"),
+    [
+        ("SKILL.md", "```sh\nAPI_HOST=private.company.finance\n```\n"),  # audit: allow-fixture
+        (
+            "SKILL.md",
+            "Set `API_HOST=private.company.finance` before running.\n",  # audit: allow-fixture
+        ),
+        ("script.sh", "curl private.company.finance\n"),  # audit: allow-fixture
+        ("SKILL.md", "private.company.dev\n"),  # audit: allow-fixture
+        ("SKILL.md", "private.company.fr\n"),  # audit: allow-fixture
+        ("SKILL.md", "private.company.email\n"),  # audit: allow-fixture
+        ("SKILL.md", "private.company.name\n"),  # audit: allow-fixture
+        ("SKILL.md", "vault.home\n"),  # audit: allow-fixture
+        ("SKILL.md", "nas.mydomain\n"),  # audit: allow-fixture
+        ("script.sh", "curl vault.home\n"),  # audit: allow-fixture
+        (
+            "SKILL.md",
+            "https://github.com/foo and vault.home\n",  # audit: allow-fixture
+        ),
+    ],
+)
+def test_locked_skill_detects_private_bare_hosts_in_code_and_real_tlds(
+    tmp_path: Path, filename: str, source: str
+) -> None:
+    (tmp_path / "skills-lock.json").write_text(
+        json.dumps({"skills": {"demo": {"source": "mattpocock/skills", "sourceType": "github"}}}),
+        encoding="utf-8",
+    )
+    skill_file = tmp_path / ".agents" / "skills" / "demo" / filename
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text(source, encoding="utf-8")
+
+    assert any("hardcoded hostname" in item for item in audit_paths(tmp_path))

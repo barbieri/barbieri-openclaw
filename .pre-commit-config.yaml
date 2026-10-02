@@ -1,3 +1,4 @@
+exclude: ^\.agents/skills/
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -11,6 +12,7 @@ repos:
         name: audit public repository text
         entry: python scripts/audit_public_source.py
         language: system
+        always_run: true
         pass_filenames: false
       - id: ruff-check
         name: ruff check
