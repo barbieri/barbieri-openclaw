@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from daily_calendar.email import compose_report_markdown
 from daily_calendar.email import markdown_to_html as markdown_to_html
 from daily_calendar.email import strip_chat_instructions as strip_chat_instructions
 
@@ -26,6 +27,12 @@ VIRTUAL_LOCATION_RE = re.compile(
 class CalendarSource:
     account: str
     label: str
+
+
+@dataclass(frozen=True)
+class CalendarReport:
+    body: str
+    footer: str | None = None
 
 
 @dataclass(frozen=True)
@@ -389,7 +396,34 @@ def build_report_markdown(
     calendar_days: int = 2,
     holiday_days: int = 28,
     include_chat_instructions: bool = False,
+    compact: bool = False,
 ) -> str:
+    report = build_calendar_report(
+        events_by_account,
+        sources,
+        now=now,
+        timezone=timezone,
+        holidays=holidays,
+        calendar_days=calendar_days,
+        holiday_days=holiday_days,
+        include_chat_instructions=include_chat_instructions,
+        compact=compact,
+    )
+    return compose_report_markdown(report.body, "", footer=report.footer)
+
+
+def build_calendar_report(
+    events_by_account: dict[str, dict],
+    sources: list[CalendarSource],
+    *,
+    now: datetime,
+    timezone: ZoneInfo,
+    holidays: dict[str, str] | None = None,
+    calendar_days: int = 2,
+    holiday_days: int = 28,
+    include_chat_instructions: bool = False,
+    compact: bool = False,
+) -> CalendarReport:
     today = now.astimezone(timezone).replace(hour=0, minute=0, second=0, microsecond=0)
     holidays = holidays or {}
 
@@ -399,10 +433,12 @@ def build_report_markdown(
 
     lines.append("# Daily Calendar Report")
     lines.append("")
-    lines.append(f"_Generated at: {now.astimezone(timezone).strftime('%d/%m/%Y %H:%M')}_")
-    lines.append("")
-    lines.append("---")
-    lines.append("")
+    generated_at = f"_Generated at: {now.astimezone(timezone).strftime('%d/%m/%Y %H:%M')}_"
+    if not compact:
+        lines.append(generated_at)
+        lines.append("")
+        lines.append("---")
+        lines.append("")
 
     for report_date in report_dates:
         daily_events = [event for event in events if event.start.date() == report_date]
@@ -416,8 +452,8 @@ def build_report_markdown(
         if not daily_events:
             lines.append("No events scheduled for this day.")
             lines.append("")
-            lines.append("---")
-            lines.append("")
+            if not compact:
+                lines.extend(["---", ""])
             continue
 
         lines.append("| Time | Event | Calendar | Status |")
@@ -432,8 +468,8 @@ def build_report_markdown(
             )
 
         lines.append("")
-        lines.append("---")
-        lines.append("")
+        if not compact:
+            lines.extend(["---", ""])
 
     lines.extend(
         _build_holiday_section(
@@ -446,8 +482,8 @@ def build_report_markdown(
         )
     )
 
-    lines.append("---")
-    lines.append("")
+    if not compact:
+        lines.extend(["---", ""])
 
     if include_chat_instructions:
         lines.append("**How to use event numbers:**")
@@ -455,20 +491,21 @@ def build_report_markdown(
         lines.append('- Reschedule: "Reschedule event #2 to 10/09 at 14:00"')
         lines.append("")
 
-    lines.append("**Legend:**")
-    lines.append("- ⚠️ = Overlapping events / Conflict")
-    lines.append("- 🥵 = Back-to-back / tight transition <5m")
-    lines.append("- ❓ = Tentative / Maybe")
-    lines.append("- ⏳ = Needs response")
-    lines.append("- 🔁 = Recurring event")
-    lines.append("- 💻 = Online meeting")
-    lines.append("- 📍 = In-person / physical address")
-    lines.append("- 👥 = More than 3 invitees")
-    lines.append("")
+    if not compact:
+        lines.append("**Legend:**")
+        lines.append("- ⚠️ = Overlapping events / Conflict")
+        lines.append("- 🥵 = Back-to-back / tight transition <5m")
+        lines.append("- ❓ = Tentative / Maybe")
+        lines.append("- ⏳ = Needs response")
+        lines.append("- 🔁 = Recurring event")
+        lines.append("- 💻 = Online meeting")
+        lines.append("- 📍 = In-person / physical address")
+        lines.append("- 👥 = More than 3 invitees")
+        lines.append("")
     lines.append("_Declined, free, and birthday events are omitted automatically._")
     lines.append("")
 
-    return "\n".join(lines)
+    return CalendarReport("\n".join(lines), generated_at if compact else None)
 
 
 def _build_holiday_section(

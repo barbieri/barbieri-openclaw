@@ -12,8 +12,13 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from daily_calendar.email import markdown_to_html, strip_chat_instructions
-from daily_calendar.report import CalendarSource, build_report_markdown, event_start_value
+from daily_calendar.email import compose_report_markdown, markdown_to_html, markdown_to_plain
+from daily_calendar.report import (
+    CalendarReport,
+    CalendarSource,
+    build_calendar_report,
+    event_start_value,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,6 +37,11 @@ def main(argv: list[str] | None = None) -> int:
 
 def run(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    append_markdown = (
+        Path(args.append_markdown_file).read_text(encoding="utf-8")
+        if args.append_markdown_file is not None
+        else ""
+    )
     locale.setlocale(locale.LC_TIME, "")
     timezone = ZoneInfo(args.timezone)
     sources = parse_calendar_sources(args.calendar_account, os.getenv("DAILY_CALENDAR_ACCOUNTS"))
@@ -40,6 +50,11 @@ def run(argv: list[str] | None = None) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now(tz=timezone)
+    if args.as_of is not None:
+        as_of = datetime.fromisoformat(args.as_of)
+        if as_of.tzinfo is None:
+            raise ValueError("--as-of requires a timezone-aware timestamp")
+        now = as_of.astimezone(timezone)
     fetch_start, fetch_end = calendar_fetch_range(
         now.date(),
         calendar_days=args.calendar_days,
@@ -57,7 +72,7 @@ def run(argv: list[str] | None = None) -> int:
         for source in sources
     }
 
-    markdown = build_report_markdown(
+    calendar_report = build_calendar_report(
         events_by_account,
         sources,
         now=now,
@@ -66,6 +81,7 @@ def run(argv: list[str] | None = None) -> int:
         calendar_days=args.calendar_days,
         holiday_days=args.holiday_days,
         include_chat_instructions=args.include_chat_instructions,
+        compact=args.compact,
     )
 
     output_stem = output_dir / f"daily_calendar_{now.strftime('%Y-%m-%d')}"
@@ -74,7 +90,8 @@ def run(argv: list[str] | None = None) -> int:
     html_path = output_stem.with_suffix(".html")
 
     write_report_files(
-        markdown=markdown,
+        calendar_report=calendar_report,
+        digest_markdown=append_markdown,
         markdown_path=markdown_path,
         text_path=text_path,
         html_path=html_path,
@@ -116,6 +133,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=os.getenv("TZ"),
         required=os.getenv("TZ") is None,
         help="Required IANA timezone used for date grouping. Env: TZ.",
+    )
+    parser.add_argument(
+        "--as-of",
+        help="Timezone-aware ISO 8601 timestamp for the report day; defaults to the current time.",
     )
     parser.add_argument(
         "--calendar-days",
@@ -170,6 +191,16 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--include-chat-instructions",
         action="store_true",
         help="Include chat-only cancel/reschedule instructions in the saved Markdown report.",
+    )
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Omit report separators and legend, and place generated-at at the end.",
+    )
+    parser.add_argument(
+        "--append-markdown-file",
+        metavar="PATH",
+        help="Append UTF-8 Markdown before the compact footer or after the default report.",
     )
     args = parser.parse_args(argv)
 
@@ -319,12 +350,19 @@ def validate_calendar_event(event: dict) -> None:
 
 
 def write_report_files(
-    *, markdown: str, markdown_path: Path, text_path: Path, html_path: Path
+    *,
+    calendar_report: CalendarReport,
+    digest_markdown: str = "",
+    markdown_path: Path,
+    text_path: Path,
+    html_path: Path,
 ) -> None:
+    body, footer = calendar_report.body, calendar_report.footer
+    markdown = compose_report_markdown(body, digest_markdown, footer=footer)
     outputs = {
         markdown_path: markdown,
-        text_path: strip_chat_instructions(markdown),
-        html_path: markdown_to_html(markdown),
+        text_path: markdown_to_plain(body, digest_markdown, footer=footer),
+        html_path: markdown_to_html(body, digest_markdown, footer=footer),
     }
     with tempfile.TemporaryDirectory(prefix=".daily-calendar-", dir=markdown_path.parent) as temp:
         temp_dir = Path(temp)

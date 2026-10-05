@@ -27,6 +27,26 @@ daily-calendar \
   --send-email
 ```
 
+## Compact combined report
+
+Add `--compact` to omit the calendar report's horizontal rules and legend and move
+its generated-at timestamp to the end. Calendar headings, tables, holidays, and
+the omission note remain present.
+
+Add `--append-markdown-file PATH` to include an existing UTF-8 Markdown file.
+The content appears before the generated-at footer in compact mode, or after the
+existing report in default mode. Trailing whitespace is stripped. No heading or
+receipt is added. The file is read before calendar fetching or email sending;
+a missing, unreadable, or invalid UTF-8 file fails the command.
+
+Use `--as-of` with a timezone-aware ISO 8601 timestamp to keep the report day
+fixed across a long run; without it, the CLI uses the current time.
+
+Both email formats include the appended content through the existing report
+converters. `--include-chat-instructions` still adds instructions only to the
+saved Markdown report. Sending still requires the configured Gmail account
+alias and recipients.
+
 ## Environment Variables
 
 - `DAILY_CALENDAR_ACCOUNTS`: comma-separated `account=Label` entries.
