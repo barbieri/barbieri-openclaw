@@ -30,8 +30,8 @@ daily-calendar \
 ## Compact combined report
 
 Add `--compact` to omit the calendar report's horizontal rules and legend and move
-its generated-at timestamp to the end. Calendar headings, tables, holidays, and
-the omission note remain present.
+its generated-at timestamp to the end. Calendar headings, tables, and the omission
+note remain present. On Fridays, the default two-day window extends through Sunday.
 
 Add `--append-markdown-file PATH` to include an existing UTF-8 Markdown file.
 The content appears before the generated-at footer in compact mode, or after the
@@ -57,17 +57,10 @@ alias and recipients.
 - `TZ`: required IANA timezone unless `--timezone` is passed.
 - `LC_ALL`, `LC_TIME`, or `LANG`: standard locale selection used for weekday names.
 - `DAILY_CALENDAR_GOG_BIN`: `gog` executable, default `gog`.
-- `DAILY_CALENDAR_HOLIDAYS_FILE`: optional JSON object mapping `YYYY-MM-DD` to holiday name.
 - `DAILY_CALENDAR_SEND_EMAIL`: set to `1` to send the generated report.
+- `DAILY_CALENDAR_SEND_STATE_FILE`: JSON file used to send at most one digest per report day.
+- `DAILY_CALENDAR_FORCE_SEND`: set to `1` to bypass the send-state guard.
 - `DAILY_CALENDAR_DRY_RUN`: set to `1` to pass `--dry-run` to `gog gmail send`.
-
-## Holiday File
-
-```json
-{
-  "2026-12-25": "Christmas"
-}
-```
 
 ## Validation
 

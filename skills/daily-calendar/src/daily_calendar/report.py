@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -9,6 +8,7 @@ from zoneinfo import ZoneInfo
 from daily_calendar.email import compose_report_markdown
 from daily_calendar.email import markdown_to_html as markdown_to_html
 from daily_calendar.email import strip_chat_instructions as strip_chat_instructions
+from daily_calendar.windowing import effective_report_day_count
 
 STATUS_ICONS = {
     "accepted": "",
@@ -21,6 +21,20 @@ VIRTUAL_LOCATION_RE = re.compile(
     r"\b(?:microsoft\s+teams|teams|google\s+meet|zoom|webex)\s+(?:meeting|call)\b",
     re.IGNORECASE,
 )
+PHYSICAL_ADDRESS_RE = re.compile(
+    r"\b(?:"
+    r"rua|avenida|av\.?|alameda|travessa|pra[cç]a|"
+    r"street|st\.?|road|rd\.?|avenue|ave\.?|boulevard|blvd\.?"
+    r")\b",
+    re.IGNORECASE,
+)
+STREET_NUMBER_RE = re.compile(r"(?:^|[,\s])(?:n[ºo°.]?\s*)?\d{1,5}(?:\s*[-/]\s*\d+)?(?:\s|,|$)")
+POSTAL_CODE_RE = re.compile(r"\b\d{5}-?\d{3}\b")
+ROOM_ONLY_RE = re.compile(
+    r"^(?:room|sala|audit[oó]rio|conference room|meeting room)\b",
+    re.IGNORECASE,
+)
+HOLIDAY_SUMMARY_RE = re.compile(r"\b(?:holiday|feriado|public holiday)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -40,6 +54,7 @@ class ReportEvent:
     start: datetime
     all_day: bool
     summary: str
+    display_summary: str
     calendars: tuple[str, ...]
     recurring: bool
     status_icon: str
@@ -219,14 +234,63 @@ def _event_has_online_link(event: dict) -> bool:
     return False
 
 
-def _event_is_in_person(event: dict) -> bool:
+def _location_text(event: dict) -> str | None:
     location = event.get("location")
     if not isinstance(location, str):
-        return False
+        return None
     stripped = location.strip()
-    if not stripped:
+    return stripped or None
+
+
+def _looks_like_physical_address(location: str) -> bool:
+    if URL_RE.search(location) or VIRTUAL_LOCATION_RE.search(location):
         return False
-    return not bool(URL_RE.search(stripped) or VIRTUAL_LOCATION_RE.search(stripped))
+    if ROOM_ONLY_RE.search(location.strip()):
+        return False
+    if PHYSICAL_ADDRESS_RE.search(location):
+        return True
+    if POSTAL_CODE_RE.search(location):
+        return True
+    return bool(STREET_NUMBER_RE.search(location))
+
+
+def _extract_city(location: str) -> str | None:
+    parts = [part.strip() for part in location.split(",") if part.strip()]
+    if len(parts) < 2:
+        return None
+    for part in reversed(parts):
+        if POSTAL_CODE_RE.search(part):
+            continue
+        if re.fullmatch(r"[A-Z]{2}", part.strip(), flags=re.IGNORECASE):
+            continue
+        if re.search(r"\d", part):
+            continue
+        if len(part) >= 3:
+            return part
+    return None
+
+
+def _physical_location_note(event: dict) -> str | None:
+    location = _location_text(event)
+    if location is None or not _looks_like_physical_address(location):
+        return None
+    city = _extract_city(location)
+    return city
+
+
+def _event_is_in_person(event: dict) -> bool:
+    location = _location_text(event)
+    if location is None:
+        return False
+    return _looks_like_physical_address(location)
+
+
+def _format_event_summary(event: dict) -> str:
+    summary = event.get("summary", "Untitled")
+    city = _physical_location_note(event)
+    if city:
+        return f"{summary} · {city}"
+    return summary
 
 
 def _event_type_icons(event: dict) -> tuple[str, ...]:
@@ -267,8 +331,15 @@ def get_response_status(event: dict) -> tuple[str | None, str]:
 
 
 def should_skip_event(event: dict) -> bool:
-    if event.get("eventType") == "birthday":
+    event_type = event.get("eventType")
+    if event_type in {"birthday", "focusTime", "workingLocation", "outOfOffice"}:
         return True
+
+    summary = event.get("summary")
+    if isinstance(summary, str) and HOLIDAY_SUMMARY_RE.search(summary):
+        start = event.get("start", {})
+        if isinstance(start, dict) and start.get("date") and not start.get("dateTime"):
+            return True
 
     availability = event.get("transparency")
     if isinstance(availability, str) and availability.lower() in {"transparent", "free"}:
@@ -319,10 +390,12 @@ def collect_events(
                 continue
 
             _, status_icon = get_response_status(event)
+            display_summary = _format_event_summary(event)
             events_by_key[key] = ReportEvent(
                 start=start,
                 all_day=all_day,
                 summary=event.get("summary", "Untitled"),
+                display_summary=display_summary,
                 calendars=(source.label,),
                 recurring="recurringEventId" in event,
                 status_icon=status_icon,
@@ -392,9 +465,7 @@ def build_report_markdown(
     *,
     now: datetime,
     timezone: ZoneInfo,
-    holidays: dict[str, str] | None = None,
     calendar_days: int = 2,
-    holiday_days: int = 28,
     include_chat_instructions: bool = False,
     compact: bool = False,
 ) -> str:
@@ -403,9 +474,7 @@ def build_report_markdown(
         sources,
         now=now,
         timezone=timezone,
-        holidays=holidays,
         calendar_days=calendar_days,
-        holiday_days=holiday_days,
         include_chat_instructions=include_chat_instructions,
         compact=compact,
     )
@@ -418,17 +487,15 @@ def build_calendar_report(
     *,
     now: datetime,
     timezone: ZoneInfo,
-    holidays: dict[str, str] | None = None,
     calendar_days: int = 2,
-    holiday_days: int = 28,
     include_chat_instructions: bool = False,
     compact: bool = False,
 ) -> CalendarReport:
     today = now.astimezone(timezone).replace(hour=0, minute=0, second=0, microsecond=0)
-    holidays = holidays or {}
 
     lines: list[str] = []
-    report_dates = [(today + timedelta(days=offset)).date() for offset in range(calendar_days)]
+    report_day_count = effective_report_day_count(today.date(), calendar_days)
+    report_dates = [(today + timedelta(days=offset)).date() for offset in range(report_day_count)]
     events = collect_events(events_by_account, sources, timezone)
 
     lines.append("# Daily Calendar Report")
@@ -462,7 +529,7 @@ def build_calendar_report(
             lines.append(
                 "| "
                 f"{_format_time_cell(event)} | "
-                f"{markdown_cell(event.summary, 50)} | "
+                f"{markdown_cell(event.display_summary)} | "
                 f"{markdown_cell(', '.join(event.calendars))} | "
                 f"{_build_status_cell(event)} |"
             )
@@ -470,20 +537,6 @@ def build_calendar_report(
         lines.append("")
         if not compact:
             lines.extend(["---", ""])
-
-    lines.extend(
-        _build_holiday_section(
-            events,
-            today=today,
-            timezone=timezone,
-            holidays=holidays,
-            calendar_days=calendar_days,
-            holiday_days=holiday_days,
-        )
-    )
-
-    if not compact:
-        lines.extend(["---", ""])
 
     if include_chat_instructions:
         lines.append("**How to use event numbers:**")
@@ -502,56 +555,7 @@ def build_calendar_report(
         lines.append("- 📍 = In-person / physical address")
         lines.append("- 👥 = More than 3 invitees")
         lines.append("")
-    lines.append("_Declined, free, and birthday events are omitted automatically._")
+    lines.append("_Declined, free, holiday, and birthday events are omitted automatically._")
     lines.append("")
 
     return CalendarReport("\n".join(lines), generated_at if compact else None)
-
-
-def _build_holiday_section(
-    events: list[ReportEvent],
-    *,
-    today: datetime,
-    timezone: ZoneInfo,
-    holidays: dict[str, str],
-    calendar_days: int,
-    holiday_days: int,
-) -> list[str]:
-    lines = ["## Holiday Events", ""]
-    holiday_events: dict[str, list[ReportEvent]] = defaultdict(list)
-    cutoff_date = (today + timedelta(days=calendar_days)).date()
-    max_date = (today + timedelta(days=holiday_days)).date()
-
-    for event in events:
-        event_date = event.start.date()
-        date_key = event_date.isoformat()
-        if cutoff_date <= event_date <= max_date and date_key in holidays:
-            holiday_events[date_key].append(event)
-
-    if not holiday_events:
-        lines.append("No events scheduled on configured holidays.")
-        lines.append("")
-        return lines
-
-    event_counter = 1
-    for date_key in sorted(holiday_events):
-        holiday_name = holidays[date_key]
-        date_value = datetime.fromisoformat(f"{date_key}T00:00:00").replace(tzinfo=timezone)
-        lines.append(f"### {date_value.strftime('%d/%m/%Y')} - **{holiday_name}**")
-        lines.append("")
-        lines.append("| # | Time | Event | Calendar | Status |")
-        lines.append("|---|------|-------|----------|--------|")
-
-        for event in holiday_events[date_key]:
-            lines.append(
-                "| "
-                f"{event_counter} | "
-                f"{_format_time_cell(event)} | "
-                f"{markdown_cell(event.summary, 55)} | "
-                f"{markdown_cell(', '.join(event.calendars))} | "
-                f"{_build_status_cell(event)} |"
-            )
-            event_counter += 1
-        lines.append("")
-
-    return lines

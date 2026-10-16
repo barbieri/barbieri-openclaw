@@ -281,7 +281,7 @@ def test_report_marks_physical_location_and_large_meeting() -> None:
                     "start": {"dateTime": "2026-08-18T12:00:00+00:00"},
                     "attendees": [{"self": True, "responseStatus": "accepted"}]
                     + [{"responseStatus": "accepted"} for _ in range(4)],
-                    "location": "Rua das Flores, 123",
+                    "location": "Rua das Flores, 123, São Paulo",
                 }
             ]
         }
@@ -294,7 +294,51 @@ def test_report_marks_physical_location_and_large_meeting() -> None:
         timezone=timezone,
     )
 
-    assert "| 12:00 | Planning on-site | Work | 📍 👥 |" in report
+    assert "| 12:00 | Planning on-site · São Paulo | Work | 📍 👥 |" in report
+
+
+def test_report_keeps_long_event_titles() -> None:
+    timezone = ZoneInfo("UTC")
+    now = datetime(2026, 8, 18, 8, 0, tzinfo=timezone)
+    long_title = "Technical questions allignment - Onboard SW RFQ"
+    events_by_account = {
+        "fixture": {
+            "events": [
+                {
+                    "id": "long",
+                    "summary": long_title,
+                    "start": {"dateTime": "2026-08-18T09:00:00+00:00"},
+                    "attendees": [{"self": True, "responseStatus": "accepted"}],
+                }
+            ]
+        }
+    }
+
+    report = build_report_markdown(
+        events_by_account,
+        [CalendarSource(account="fixture", label="Work")],
+        now=now,
+        timezone=timezone,
+    )
+
+    assert long_title in report
+    assert "Technical questions allign" not in report or long_title in report
+
+
+def test_report_friday_includes_sunday_heading() -> None:
+    timezone = ZoneInfo("UTC")
+    now = datetime(2026, 10, 16, 8, 0, tzinfo=timezone)
+    report = build_report_markdown(
+        {},
+        [CalendarSource(account="fixture", label="Work")],
+        now=now,
+        timezone=timezone,
+        calendar_days=2,
+    )
+
+    assert "## 16/10 (Friday)" in report
+    assert "## 17/10 (Saturday)" in report
+    assert "## 18/10 (Sunday)" in report
 
 
 def test_report_does_not_mark_teams_location_as_in_person() -> None:

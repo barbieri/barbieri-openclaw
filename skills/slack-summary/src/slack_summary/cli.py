@@ -9,6 +9,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .asks import build_unanswered_asks_markdown, find_unanswered_asks, load_dismissed_state
 from .cleanup import TextCleaner
 from .references import normalize_workspace_url
 from .slacrawl import iter_source_threads
@@ -28,6 +29,27 @@ def main(argv: list[str] | None = None) -> int:
         timezone = parse_timezone(args.timezone)
         workspace_url = normalize_workspace_url(args.workspace_url)
         date_range = resolve_date_range(args, timezone)
+        if args.target_user_id:
+            dismissed = load_dismissed_state(args.state_file)
+            asks = find_unanswered_asks(
+                database_path=args.database,
+                target_user_id=args.target_user_id,
+                start_ts=date_range.start.timestamp(),
+                end_ts=date_range.end.timestamp(),
+                workspace_url=workspace_url,
+                dismissed=dismissed,
+                limit=args.limit,
+            )
+            print(
+                build_unanswered_asks_markdown(
+                    asks,
+                    timezone=timezone,
+                    workspace_url=workspace_url,
+                )
+            )
+            return 0
+        if args.channel is None:
+            raise ValueError("--channel is required unless --target-user-id is set")
         source_threads = iter_source_threads(
             database_path=args.database,
             channel_id=args.channel,
@@ -74,8 +96,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--channel",
         type=nonempty_string,
         default=env_string("SLACK_SUMMARY_CHANNEL"),
-        required=env_string("SLACK_SUMMARY_CHANNEL") is None,
         help="Slack channel id to summarize. Env: SLACK_SUMMARY_CHANNEL.",
+    )
+    parser.add_argument(
+        "--target-user-id",
+        type=nonempty_string,
+        default=env_string("SLACK_SUMMARY_TARGET_USER_ID"),
+        help=(
+            "Find unanswered asks for this Slack user across channels and DMs. "
+            "Env: SLACK_SUMMARY_TARGET_USER_ID."
+        ),
+    )
+    parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=env_path("SLACK_SUMMARY_STATE_FILE"),
+        help="JSON file with dismissed unanswered asks. Env: SLACK_SUMMARY_STATE_FILE.",
     )
     parser.add_argument(
         "--workspace-url",

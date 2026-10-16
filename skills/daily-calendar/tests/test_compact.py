@@ -31,7 +31,6 @@ def test_compact_report_preserves_calendar_and_appends_before_footer(
         [CalendarSource(account="fixture", label="Fixture")],
         now=now,
         timezone=timezone,
-        holidays={"2026-08-21": "Example holiday"},
         compact=True,
         include_chat_instructions=include_chat_instructions,
     )
@@ -44,12 +43,10 @@ def test_compact_report_preserves_calendar_and_appends_before_footer(
     for day in [18, 19]:
         assert f"## {datetime(2026, 8, day).strftime('%d/%m (%A)')}" in report
         assert f"| 09:00 | Planning {day} | Fixture |  |" in report
-    assert "## Holiday Events" in report
-    assert "### 21/08/2026 - **Example holiday**" in report
-    assert "| 1 | 09:00 | Planning 21 | Fixture |  |" in report
+    assert "## Holiday Events" not in report
     assert "---" not in report.splitlines()
     assert "**Legend:**" not in report
-    assert "_Declined, free, and birthday events are omitted automatically._" in report
+    assert "_Declined, free, holiday, and birthday events are omitted automatically._" in report
     assert ("**How to use event numbers:**" in report) == include_chat_instructions
     assert report.count("## Email summary") == 1
     assert report.endswith("Café update.\n\n_Generated at: 18/08/2026 08:00_")
@@ -72,7 +69,7 @@ def test_compact_report_preserves_calendar_and_appends_before_footer(
         assert "Generated at: 18/08/2026 08:00" in content
         assert "How to use event numbers" not in content
         assert "Cancel event #1" not in content
-        assert "Declined, free, and birthday events are omitted automatically." in content
+        assert "Declined, free, holiday, and birthday events are omitted automatically." in content
     assert text.endswith("_Generated at: 18/08/2026 08:00_\n")
     assert "<h2>Email summary</h2>" in html
     assert "<hr>" not in html
@@ -101,12 +98,6 @@ def test_default_report_is_unchanged() -> None:
             "",
             "---",
             "",
-            "## Holiday Events",
-            "",
-            "No events scheduled on configured holidays.",
-            "",
-            "---",
-            "",
             "**Legend:**",
             "- ⚠️ = Overlapping events / Conflict",
             "- 🥵 = Back-to-back / tight transition <5m",
@@ -117,7 +108,7 @@ def test_default_report_is_unchanged() -> None:
             "- 📍 = In-person / physical address",
             "- 👥 = More than 3 invitees",
             "",
-            "_Declined, free, and birthday events are omitted automatically._",
+            "_Declined, free, holiday, and birthday events are omitted automatically._",
             "",
         ]
     )
@@ -286,8 +277,9 @@ def test_cli_composes_once_and_sends_with_explicit_account(
     monkeypatch.setattr(cli, "fetch_calendar_events", Mock(return_value={"events": []}))
     writer = Mock(wraps=cli.write_report_files)
     monkeypatch.setattr(cli, "write_report_files", writer)
-    commands = Mock()
-    monkeypatch.setattr(cli.subprocess, "run", commands)
+    completed = __import__("subprocess").CompletedProcess([], 0, stdout="", stderr="")
+    commands = Mock(return_value=completed)
+    monkeypatch.setattr(cli, "run_gog", commands)
     args = [
         "--calendar-account",
         "fixture=Fixture",

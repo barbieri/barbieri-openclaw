@@ -8,22 +8,39 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from daily_calendar.email import compose_report_markdown, markdown_to_html, markdown_to_plain
+from daily_calendar.gog import (
+    CALENDAR_EVENT_FIELDS,
+    GogPermissionError,
+    GogRateLimitError,
+    load_send_state,
+    record_digest_send,
+    run_gog,
+    should_skip_digest_send,
+)
 from daily_calendar.report import (
     CalendarReport,
     CalendarSource,
     build_calendar_report,
     event_start_value,
 )
+from daily_calendar.windowing import calendar_fetch_range
 
 
 def main(argv: list[str] | None = None) -> int:
     try:
         return run(argv)
+    except GogRateLimitError as exc:
+        print(f"daily-calendar: Google rate limit from gog: {exc.stderr.strip()}", file=sys.stderr)
+        return 1
+    except GogPermissionError as exc:
+        message = exc.stderr.strip()
+        print(f"daily-calendar: Google permission error from gog: {message}", file=sys.stderr)
+        return 1
     except (
         OSError,
         ValueError,
@@ -45,7 +62,6 @@ def run(argv: list[str] | None = None) -> int:
     locale.setlocale(locale.LC_TIME, "")
     timezone = ZoneInfo(args.timezone)
     sources = parse_calendar_sources(args.calendar_account, os.getenv("DAILY_CALENDAR_ACCOUNTS"))
-    holidays = load_holidays(args.holidays_file)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -55,12 +71,8 @@ def run(argv: list[str] | None = None) -> int:
         if as_of.tzinfo is None:
             raise ValueError("--as-of requires a timezone-aware timestamp")
         now = as_of.astimezone(timezone)
-    fetch_start, fetch_end = calendar_fetch_range(
-        now.date(),
-        calendar_days=args.calendar_days,
-        holiday_days=args.holiday_days,
-        has_holidays=bool(holidays),
-    )
+    report_day = now.date().isoformat()
+    fetch_start, fetch_end = calendar_fetch_range(now.date(), calendar_days=args.calendar_days)
     events_by_account = {
         source.account: fetch_calendar_events(
             args.gog_bin,
@@ -77,9 +89,7 @@ def run(argv: list[str] | None = None) -> int:
         sources,
         now=now,
         timezone=timezone,
-        holidays=holidays,
         calendar_days=args.calendar_days,
-        holiday_days=args.holiday_days,
         include_chat_instructions=args.include_chat_instructions,
         compact=args.compact,
     )
@@ -98,6 +108,14 @@ def run(argv: list[str] | None = None) -> int:
     )
 
     if args.send_email:
+        sends = load_send_state(args.send_state_file)
+        if should_skip_digest_send(sends, report_day, force=args.force_send):
+            print(
+                f"daily-calendar: digest for {report_day} was already sent; "
+                "use --force-send to send again",
+                file=sys.stderr,
+            )
+            return 0
         send_email(
             gog_bin=args.gog_bin,
             gmail_account=args.gmail_account,
@@ -107,6 +125,8 @@ def run(argv: list[str] | None = None) -> int:
             html_path=html_path,
             dry_run=args.dry_run,
         )
+        if not args.dry_run and args.send_state_file:
+            record_digest_send(args.send_state_file, report_day, now.isoformat())
 
     print(markdown_path)
     return 0
@@ -145,17 +165,6 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Number of days to show in the main daily section.",
     )
     parser.add_argument(
-        "--holiday-days",
-        type=int,
-        default=28,
-        help="Number of days to inspect for configured holidays.",
-    )
-    parser.add_argument(
-        "--holidays-file",
-        default=os.getenv("DAILY_CALENDAR_HOLIDAYS_FILE"),
-        help="JSON object mapping YYYY-MM-DD to holiday label.",
-    )
-    parser.add_argument(
         "--gog-bin",
         default=os.getenv("DAILY_CALENDAR_GOG_BIN", "gog"),
         help="gog executable path.",
@@ -182,6 +191,17 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Email subject. Defaults to a date-based subject.",
     )
     parser.add_argument(
+        "--send-state-file",
+        default=os.getenv("DAILY_CALENDAR_SEND_STATE_FILE"),
+        help="JSON file that records which report days were already emailed.",
+    )
+    parser.add_argument(
+        "--force-send",
+        action="store_true",
+        default=os.getenv("DAILY_CALENDAR_FORCE_SEND") == "1",
+        help="Send even when the report day is already recorded in the send state file.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         default=os.getenv("DAILY_CALENDAR_DRY_RUN") == "1",
@@ -206,13 +226,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 
     if args.calendar_days < 1:
         parser.error("--calendar-days must be at least 1")
-    if args.holiday_days < 0:
-        parser.error("--holiday-days must be zero or greater")
     remaining_days = (date.max - date.today()).days
     if args.calendar_days > remaining_days:
         parser.error(f"--calendar-days must be no greater than {remaining_days}")
-    if args.holiday_days >= remaining_days:
-        parser.error(f"--holiday-days must be less than {remaining_days}")
 
     if not args.calendar_account and not os.getenv("DAILY_CALENDAR_ACCOUNTS"):
         parser.error("provide --calendar-account or DAILY_CALENDAR_ACCOUNTS")
@@ -272,13 +288,6 @@ def load_holidays(path: str | None) -> dict[str, str]:
     return holidays
 
 
-def calendar_fetch_range(
-    today: date, *, calendar_days: int, holiday_days: int, has_holidays: bool
-) -> tuple[date, date]:
-    days = max(calendar_days, holiday_days + 1 if has_holidays else 0)
-    return today, today + timedelta(days=days)
-
-
 def fetch_calendar_events(
     gog_bin: str,
     account: str,
@@ -287,11 +296,12 @@ def fetch_calendar_events(
     end: date,
     timezone: ZoneInfo,
 ) -> dict:
-    result = subprocess.run(
+    result = run_gog(
         [
             gog_bin,
             "calendar",
-            "list",
+            "events",
+            "primary",
             "-a",
             account,
             "--from",
@@ -300,13 +310,14 @@ def fetch_calendar_events(
             end.isoformat(),
             "--timezone",
             timezone.key,
+            "--max",
+            "250",
+            "--fields",
+            CALENDAR_EVENT_FIELDS,
             "--all-pages",
             "--no-input",
             "--json",
-        ],
-        capture_output=True,
-        check=True,
-        text=True,
+        ]
     )
     return parse_calendar_response(result.stdout)
 
@@ -404,4 +415,4 @@ def send_email(
     if dry_run:
         command.insert(3, "--dry-run")
 
-    subprocess.run(command, check=True)
+    run_gog(command)
