@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from daily_calendar.cli import (
-    calendar_fetch_range,
     fetch_calendar_events,
     load_holidays,
     main,
@@ -21,9 +20,10 @@ from daily_calendar.report import (
     markdown_cell,
     markdown_to_html,
 )
+from daily_calendar.windowing import calendar_fetch_range
 
 
-def test_holiday_section_starts_after_configured_calendar_window() -> None:
+def test_holiday_all_day_events_are_omitted_from_report() -> None:
     timezone = ZoneInfo("UTC")
     now = datetime(2026, 8, 18, 8, 0, tzinfo=timezone)
     events_by_account = {
@@ -31,8 +31,8 @@ def test_holiday_section_starts_after_configured_calendar_window() -> None:
             "events": [
                 {
                     "id": "event-1",
-                    "summary": "Release planning",
-                    "start": {"dateTime": "2026-08-20T09:00:00+00:00"},
+                    "summary": "Public holiday",
+                    "start": {"date": "2026-08-20"},
                 }
             ]
         }
@@ -43,11 +43,10 @@ def test_holiday_section_starts_after_configured_calendar_window() -> None:
         [CalendarSource(account="fixture", label="Fixture")],
         now=now,
         timezone=timezone,
-        holidays={"2026-08-20": "Example holiday"},
         calendar_days=3,
     )
 
-    assert report.count("Release planning") == 1
+    assert "Public holiday" not in report
 
 
 def test_html_table_preserves_escaped_pipe_inside_cell() -> None:
@@ -157,7 +156,7 @@ def test_main_reports_configuration_errors_without_traceback(capsys: pytest.Capt
     assert "Traceback" not in error
 
 
-@pytest.mark.parametrize("option", ["--calendar-days", "--holiday-days"])
+@pytest.mark.parametrize("option", ["--calendar-days"])
 def test_main_rejects_unrepresentable_day_ranges_without_traceback(
     option: str, capsys: pytest.CaptureFixture
 ) -> None:
@@ -195,7 +194,7 @@ def test_events_without_ids_remain_distinct() -> None:
     assert "Second event" in report
 
 
-def test_shared_holiday_event_is_deduplicated_across_calendars() -> None:
+def test_shared_event_is_deduplicated_across_calendars() -> None:
     timezone = ZoneInfo("UTC")
     now = datetime(2026, 8, 18, 8, 0, tzinfo=timezone)
     shared_event = {
@@ -212,23 +211,19 @@ def test_shared_holiday_event_is_deduplicated_across_calendars() -> None:
         ],
         now=now,
         timezone=timezone,
-        holidays={"2026-08-21": "Example holiday"},
+        calendar_days=4,
     )
 
     assert report.count("Shared planning") == 1
     assert "First, Second" in report
 
 
-def test_calendar_fetch_range_only_extends_for_configured_holidays() -> None:
+def test_calendar_fetch_range_matches_report_window() -> None:
     today = datetime(2026, 8, 18).date()
 
-    assert calendar_fetch_range(today, calendar_days=2, holiday_days=28, has_holidays=False) == (
+    assert calendar_fetch_range(today, calendar_days=2) == (
         today,
         datetime(2026, 8, 20).date(),
-    )
-    assert calendar_fetch_range(today, calendar_days=2, holiday_days=28, has_holidays=True) == (
-        today,
-        datetime(2026, 9, 16).date(),
     )
 
 
@@ -237,9 +232,13 @@ def test_calendar_fetch_uses_complete_explicit_window(monkeypatch: pytest.Monkey
 
     def fake_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
         captured_command.extend(command)
-        return SimpleNamespace(stdout='{"events": []}')
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"events": []}',
+            stderr="",
+        )
 
-    monkeypatch.setattr("daily_calendar.cli.subprocess.run", fake_run)
+    monkeypatch.setattr("daily_calendar.gog.subprocess.run", fake_run)
 
     fetch_calendar_events(
         "gog",
@@ -252,7 +251,8 @@ def test_calendar_fetch_uses_complete_explicit_window(monkeypatch: pytest.Monkey
     assert captured_command == [
         "gog",
         "calendar",
-        "list",
+        "events",
+        "primary",
         "-a",
         "fixture",
         "--from",
@@ -261,6 +261,10 @@ def test_calendar_fetch_uses_complete_explicit_window(monkeypatch: pytest.Monkey
         "2026-08-20",
         "--timezone",
         "UTC",
+        "--max",
+        "250",
+        "--fields",
+        "id,iCalUID,summary,start,end,location,description,hangoutLink,conferenceData,eventType,recurringEventId,attendees,organizer,creator,transparency",
         "--all-pages",
         "--no-input",
         "--json",
