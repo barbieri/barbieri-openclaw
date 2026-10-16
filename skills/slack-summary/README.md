@@ -37,8 +37,6 @@ Configuration comes from command-line arguments or environment variables:
 - `SLACK_SUMMARY_DAYS`: window size when `--start` is omitted.
 - `SLACK_SUMMARY_LIMIT`: maximum number of complete thread entries.
 - `SLACK_SUMMARY_INCLUDE_BOTS`: include bot messages when true. Bots are excluded by default.
-- `SLACK_SUMMARY_TARGET_USER_ID`: when set, list unanswered asks for that user across channels and DMs.
-- `SLACK_SUMMARY_STATE_FILE`: JSON file with dismissed unanswered asks.
 
 Time windows include `--start` and exclude `--end`. Date-only and timezone-naive values use the
 configured timezone. Output timestamps use that timezone and minute precision.
