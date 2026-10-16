@@ -7,6 +7,9 @@ Generate a daily calendar report with public [gogcli](https://github.com/opencla
 
 No account aliases, email addresses, passwords, or host-specific paths are hardcoded. Pass configuration with CLI arguments or environment variables.
 
+Calendar collection requests the selected event fields under `items(...)` in the
+Google Calendar list response and retains `nextPageToken` for complete pagination.
+
 ## Generate A Report
 
 ```bash
