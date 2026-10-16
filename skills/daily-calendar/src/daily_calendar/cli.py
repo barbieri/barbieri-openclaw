@@ -313,7 +313,7 @@ def fetch_calendar_events(
             "--max",
             "250",
             "--fields",
-            CALENDAR_EVENT_FIELDS,
+            f"nextPageToken,items({CALENDAR_EVENT_FIELDS})",
             "--all-pages",
             "--no-input",
             "--json",

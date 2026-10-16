@@ -264,7 +264,7 @@ def test_calendar_fetch_uses_complete_explicit_window(monkeypatch: pytest.Monkey
         "--max",
         "250",
         "--fields",
-        "id,iCalUID,summary,start,end,location,description,hangoutLink,conferenceData,eventType,recurringEventId,attendees,organizer,creator,transparency",
+        "nextPageToken,items(id,iCalUID,summary,start,end,location,description,hangoutLink,conferenceData,eventType,recurringEventId,attendees,organizer,creator,transparency)",
         "--all-pages",
         "--no-input",
         "--json",
