@@ -5,6 +5,8 @@ import re
 from typing import Literal, NamedTuple
 from urllib.parse import urlsplit
 
+from .style import CSS
+
 _MARKDOWN_LINK_START = re.compile(r"(?<!\\)\[((?:\\.|[^\\\]\n]){1,256})]\(")
 _ESCAPED_PUNCTUATION = re.compile(r"\\([\[\]*_])")
 _MAX_LINK_TARGET_LENGTH = 2048
@@ -160,42 +162,14 @@ def markdown_to_html(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    body {{
-      margin: 0;
-      padding: 24px;
-      background: #f6f7f9;
-      color: #1f2937;
-      font-family: Arial, Helvetica, sans-serif;
-      line-height: 1.45;
-    }}
-    main {{
-      max-width: 760px;
-      margin: 0 auto;
-      background: #ffffff;
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      padding: 24px;
-    }}
-    h1 {{ margin: 0 0 12px; font-size: 24px; }}
-    h2 {{ margin: 28px 0 12px; font-size: 18px; }}
-    h3 {{ margin: 22px 0 10px; font-size: 16px; }}
-    h4 {{ margin: 18px 0 8px; font-size: 15px; }}
-    p {{ margin: 8px 0 12px; }}
-    table {{ width: 100%; border-collapse: collapse; margin: 8px 0 16px; font-size: 14px; }}
-    th, td {{
-      border: 1px solid #d8dee8;
-      padding: 8px 10px;
-      text-align: left;
-      vertical-align: top;
-    }}
-    th {{ background: #eef2f7; font-weight: 700; }}
-    hr {{ border: 0; border-top: 1px solid #e5e7eb; margin: 22px 0; }}
-    ul {{ margin: 8px 0 14px 22px; padding: 0; }}
-  </style>
+  <meta name="color-scheme" content="light dark">
+  <style>{CSS}</style>
 </head>
 <body>
   <main>
+    <svg class="material-icon" role="img" aria-label="Calendar" viewBox="0 0 24 24">
+      <path d="M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2
+        h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 16H5V9h14zM7 11h5v5H7z"/></svg>
 {rendered_body}
   </main>
 </body>
