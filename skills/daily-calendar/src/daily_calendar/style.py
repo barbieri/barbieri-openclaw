@@ -120,9 +120,9 @@ font-weight:500}
 h3{font-size:16px;
 font-weight:500}
 
-a{color:var(--accent);
-text-decoration:none}
-a:hover{text-decoration:underline}
+a{color:#2563eb;
+color:var(--accent);
+text-decoration:underline}
 
 table{width:100%;
 border-collapse:collapse;
@@ -134,6 +134,8 @@ padding:8px;
 text-align:left}
 th{background:var(--accent-soft);
 font-weight:500}
+
+td.report-table-value{text-align:right}
 
 hr{border:0;
 border-top:1px solid var(--border);

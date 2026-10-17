@@ -61,11 +61,17 @@ def export(source: str) -> tuple[str, dict[str, list[str]], dict[str, str]]:
         "color:var(--text);border:1px solid var(--border);border-radius:12px}\n"
         "h1{font-size:24px;font-weight:500}h2{font-size:18px;"
         "font-weight:500}h3{font-size:16px;font-weight:500}\n"
-        "a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}\n"
+        # Links keep an underline everywhere and declare a literal fallback
+        # before the token: clients that do not resolve custom properties then
+        # still get the light-theme accent instead of inherited body text.
+        f"a{{color:{light['accent']};color:var(--accent);text-decoration:underline}}\n"
         "table{width:100%;border-collapse:collapse;font-size:14px;"
         "font-variant-numeric:tabular-nums}\n"
         "th,td{border:1px solid var(--border-strong);padding:8px;"
         "text-align:left}th{background:var(--accent-soft);font-weight:500}\n"
+        # Numeric report cells stay right-aligned (report-html-contract); this
+        # bare rule covers unscoped email documents.
+        "td.report-table-value{text-align:right}\n"
         "hr{border:0;border-top:1px solid var(--border);margin:22px 0}\n"
         "pre{white-space:pre-wrap;overflow-wrap:anywhere;"
         "background:var(--surface-sunken);color:var(--text);padding:16px;border-radius:12px}\n"
@@ -117,6 +123,9 @@ def main() -> None:
             css,
         )
         css = css.replace(".material-icon{", ".gustavo-report .material-icon{")
+        # Scoped numeric-cell rule with enough specificity to beat the shared
+        # td rule above (same contract as the email's bare rule).
+        css += ".gustavo-report td.report-table-value{text-align:right}\n"
         body = re.search(r"\.gustavo-report\{margin.*?}", css, re.S)
         if body is None:
             raise ValueError("Report surface styles are missing")
