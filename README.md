@@ -7,8 +7,9 @@ Reusable OpenClaw skills backed by small, testable Python command-line tools. Th
 - `skills/daily-calendar`: daily calendar report generator with Markdown, plain-text email, and HTML email output.
 - `skills/openfinance`: OpenFinance SQLite summary and pattern CLIs.
 - `skills/slack-summary`: Slack transcript extraction and conversational analysis from a local slacrawl database.
+- `skills/one-click-unsubscribe`: reusable RFC 8058 one-click unsubscribe HTTP transport and CLI.
 
-Each directory contains a `SKILL.md` for OpenClaw and a README for direct CLI use. The external data providers are public projects:
+Skill directories include a README for direct CLI use; directories with an OpenClaw `SKILL.md` provide agent instructions. The external data providers are public projects:
 
 - Daily Calendar uses [gogcli](https://github.com/openclaw/gogcli).
 - Slack Summary uses [slacrawl](https://github.com/openclaw/slacrawl).
@@ -37,6 +38,7 @@ daily-calendar --help
 openfinance-summary --help
 openfinance-patterns --help
 slack-summary --help
+one-click-unsubscribe --help
 ```
 
 The user-level install keeps commands available to OpenClaw, cron, and shells without activating a

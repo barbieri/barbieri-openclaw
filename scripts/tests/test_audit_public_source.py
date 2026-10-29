@@ -144,6 +144,73 @@ def test_synthetic_prefix_does_not_exempt_production_values(tmp_path: Path) -> N
     assert any("credential" in item for item in find_violations(source_path))
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://service.invalid/path",
+        "https://service.example.org/path",
+        "https://127.0.0.1/path",
+        "https://192.0.0.9/path",
+    ],
+)
+def test_reserved_and_loopback_urls_are_allowed_only_in_test_fixtures(
+    tmp_path: Path, url: str
+) -> None:
+    fixture = tmp_path / "tests" / "fixture.py"
+    fixture.parent.mkdir()
+    fixture.write_text(f'endpoint = "{url}"\n', encoding="utf-8")
+
+    assert not find_violations(fixture)
+
+    production = tmp_path / "production.py"
+    production.write_text(f'endpoint = "{url}"\n', encoding="utf-8")
+    assert any("hardcoded URL" in item for item in find_violations(production))
+
+
+def test_synthetic_url_sensitive_assignment_is_allowed_only_in_test_fixtures(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "tests" / "fixture.py"
+    fixture.parent.mkdir()
+    fixture.write_text('secret_url = "https://service.invalid/path?token=fake"\n', encoding="utf-8")
+    assert not find_violations(fixture)
+
+    production = tmp_path / "production.py"
+    production.write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+    assert any("hardcoded credential" in item for item in find_violations(production))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'password = "{opaque-value}"\n',
+        'token = "https://pypi.org/manage/account/token/opaque-value"\n',
+        'secret_url = "https://pypi.org/manage/account/token/opaque-value"\n',
+        'secret = "opaque-value https://example.invalid/"\n',
+    ],
+)
+def test_synthetic_url_allowance_does_not_hide_other_sensitive_values(
+    tmp_path: Path, source: str
+) -> None:
+    fixture = tmp_path / "tests" / "fixture.py"
+    fixture.parent.mkdir()
+    fixture.write_text(source, encoding="utf-8")
+
+    assert any("hardcoded credential" in item for item in find_violations(fixture))
+
+
+def test_malformed_url_is_rejected_in_production_and_safe_in_test_fixture(tmp_path: Path) -> None:
+    malformed = 'endpoint = "https://[invalid/"\n'
+    fixture = tmp_path / "tests" / "fixture.py"
+    fixture.parent.mkdir()
+    fixture.write_text(malformed, encoding="utf-8")
+    assert not find_violations(fixture)
+
+    production = tmp_path / "production.py"
+    production.write_text(malformed, encoding="utf-8")
+    assert any("hardcoded URL" in item for item in find_violations(production))
+
+
 @pytest.mark.parametrize("suffix", [".md", ".toml"])
 def test_private_urls_are_rejected_in_repository_text(tmp_path: Path, suffix: str) -> None:
     source_path = tmp_path / f"configuration{suffix}"

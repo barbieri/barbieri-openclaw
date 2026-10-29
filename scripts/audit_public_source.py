@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import ipaddress
 import json
 import os
 import re
@@ -403,6 +404,19 @@ def hardcoded_sensitive_value(
         return False
     if allow_synthetic and literal.casefold().startswith(("example", "fake", "fixture", "test")):
         return False
+    if (
+        allow_synthetic
+        and all(name.casefold().endswith("_url") for name in sensitive_names)
+        and URL_PATTERN.fullmatch(literal)
+        and is_synthetic_url(literal, allow_synthetic=True)
+    ):
+        return False
+    if (
+        allow_synthetic
+        and all(name.casefold().endswith(("_host", "_hostname")) for name in sensitive_names)
+        and is_synthetic_hostname(literal, allow_synthetic=True)
+    ):
+        return False
     if all(name.casefold().endswith("_id") or name.casefold() == "id" for name in sensitive_names):
         return bool(ID_VALUE_PATTERN.fullmatch(literal))
     return True
@@ -443,12 +457,45 @@ def contains_hostname(value: str) -> bool:
     )
 
 
+def is_synthetic_url(url: str, *, allow_synthetic: bool) -> bool:
+    if not allow_synthetic:
+        return False
+    try:
+        hostname = (urlsplit(url).hostname or "").casefold()
+    except ValueError:
+        return True
+    return is_synthetic_hostname(hostname, allow_synthetic=True)
+
+
+def is_synthetic_hostname(hostname: str, *, allow_synthetic: bool) -> bool:
+    if not allow_synthetic:
+        return False
+    hostname = hostname.casefold()
+    if re.fullmatch(r"\{[A-Za-z_][A-Za-z_0-9]*\}", hostname):
+        return True
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+    if address is not None:
+        return bool(address.is_loopback or address == ipaddress.ip_address("192.0.0.9"))
+    is_reserved_example = hostname.endswith(
+        (".invalid", ".test", ".example", ".example.com", ".example.net", ".example.org")
+    ) or hostname in {"example.com", "example.net", "example.org"}
+    return is_reserved_example and HOSTNAME_PATTERN.fullmatch(hostname) is not None
+
+
 def contains_unapproved_url(value: str, *, allow_synthetic: bool) -> bool:
     for match in URL_PATTERN.finditer(value):
         url = match.group().rstrip(".,;:!?)]}")
-        parsed = urlsplit(url)
+        try:
+            parsed = urlsplit(url)
+        except ValueError:
+            if allow_synthetic:
+                continue
+            return True
         hostname = (parsed.hostname or "").casefold()
-        if allow_synthetic and hostname.endswith(".invalid"):
+        if is_synthetic_url(url, allow_synthetic=allow_synthetic):
             continue
         if hostname in PUBLIC_URL_HOSTS:
             continue
@@ -464,7 +511,10 @@ def contains_unapproved_url(value: str, *, allow_synthetic: bool) -> bool:
 def contains_unapproved_vendor_url(value: str) -> bool:
     for match in URL_PATTERN.finditer(value):
         url = match.group().rstrip(".,;:!?)]}")
-        hostname = (urlsplit(url).hostname or "").casefold()
+        try:
+            hostname = (urlsplit(url).hostname or "").casefold()
+        except ValueError:
+            return True
         if hostname in VENDORED_PUBLIC_URL_HOSTS or hostname == "example.com":
             continue
         if hostname.endswith(".example.com"):

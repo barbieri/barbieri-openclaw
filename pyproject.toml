@@ -9,7 +9,7 @@ dependencies = [
     "detect-secrets==1.5.0",
     "phonenumbers>=9.0.40",
 ]
-keywords = ["openclaw", "automation", "calendar", "open-finance", "slack"]
+keywords = ["openclaw", "automation", "calendar", "open-finance", "slack", "unsubscribe"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -31,6 +31,7 @@ daily-calendar = "daily_calendar.cli:main"
 openfinance-patterns = "openfinance_tools.patterns:main"
 openfinance-summary = "openfinance_tools.summary:main"
 slack-summary = "slack_summary.cli:main"
+one-click-unsubscribe = "one_click_unsubscribe:main"
 
 [build-system]
 requires = ["setuptools>=84"]
@@ -51,12 +52,14 @@ pythonpath = [
   "skills/daily-calendar/src",
   "skills/openfinance/src",
   "skills/slack-summary/src",
+  "skills/one-click-unsubscribe/src",
 ]
 testpaths = [
   "scripts/tests",
   "skills/daily-calendar/tests",
   "skills/openfinance/tests",
   "skills/slack-summary/tests",
+  "skills/one-click-unsubscribe/tests",
 ]
 
 [tool.ruff]
@@ -78,6 +81,7 @@ where = [
   "skills/daily-calendar/src",
   "skills/openfinance/src",
   "skills/slack-summary/src",
+  "skills/one-click-unsubscribe/src",
 ]
 
 [tool.setuptools.data-files]
@@ -95,4 +99,7 @@ where = [
 "share/barbieri-openclaw/skills/slack-summary" = [
   "skills/slack-summary/README.md",
   "skills/slack-summary/SKILL.md",
+]
+"share/barbieri-openclaw/skills/one-click-unsubscribe" = [
+  "skills/one-click-unsubscribe/README.md",
 ]
