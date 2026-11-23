@@ -21,6 +21,16 @@ PERMISSION_MARKERS = (
     "not authorized",
 )
 RETRY_AFTER_RE = re.compile(r"retry[- ]after[:\s]+(\d+)", re.IGNORECASE)
+TRANSIENT_MARKERS = (
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "connection reset",
+    "connection refused",
+    "temporarily unavailable",
+    "deadline exceeded",
+)
 
 CALENDAR_EVENT_FIELDS = ",".join(
     (
@@ -49,14 +59,52 @@ class GogRateLimitError(subprocess.CalledProcessError):
     """gog failed with a retryable Google rate limit."""
 
     def __init__(self, returncode: int, *, stdout: str, stderr: str) -> None:
-        super().__init__(returncode, [], output=stdout, stderr=stderr)
+        super().__init__(returncode, [], output="", stderr="")
+        self.operation = "request"
+        self.attempts = 1
+        self.http_status: int | None = None
 
 
 class GogPermissionError(subprocess.CalledProcessError):
     """gog failed with a non-retryable permission error."""
 
     def __init__(self, returncode: int, *, stdout: str, stderr: str) -> None:
-        super().__init__(returncode, [], output=stdout, stderr=stderr)
+        super().__init__(returncode, [], output="", stderr="")
+        self.operation = "request"
+        self.http_status: int | None = None
+
+
+class GogTransientError(RuntimeError):
+    """A read failed after bounded retries; fields contain no provider payload."""
+
+    def __init__(
+        self,
+        operation: str,
+        category: str,
+        attempts: int,
+        http_status: int | None = None,
+        exit_code: int | None = None,
+    ) -> None:
+        details = [f"{attempts} attempts", category]
+        if exit_code is not None:
+            details.append(f"exit code {exit_code}")
+        if http_status is not None:
+            details.append(f"HTTP {http_status}")
+        super().__init__(f"gog {operation} failed ({', '.join(details)})")
+        self.operation = operation
+        self.category = category
+        self.attempts = attempts
+        self.http_status = http_status
+        self.exit_code = exit_code
+
+
+class GogExecutionError(RuntimeError):
+    """A local gog launch failure, with no retry or command payload."""
+
+    def __init__(self, operation: str) -> None:
+        super().__init__(f"gog {operation} could not be started (local execution error)")
+        self.operation = operation
+        self.category = "local_execution_error"
 
 
 def ensure_gmail_query_excludes_trash(query: str) -> str:
@@ -72,57 +120,113 @@ def ensure_gmail_query_excludes_trash(query: str) -> str:
 
 def classify_gog_failure(
     returncode: int, stdout: str, stderr: str
-) -> subprocess.CalledProcessError | None:
-    combined = f"{stdout}\n{stderr}".casefold()
+) -> subprocess.CalledProcessError | GogTransientError | None:
+    combined = stderr.casefold()
     if returncode == 429 or _looks_like_rate_limit(combined):
-        return GogRateLimitError(returncode, stderr=stderr, stdout=stdout)
+        failure = GogRateLimitError(returncode, stderr=stderr, stdout=stdout)
+        failure.http_status = _http_status_from_text(stderr) or (
+            returncode if returncode in range(400, 600) else None
+        )
+        return failure
     if returncode == 403 and _looks_like_rate_limit(combined):
         return GogRateLimitError(returncode, stderr=stderr, stdout=stdout)
     if returncode == 403 or _looks_like_permission_denied(combined):
-        return GogPermissionError(returncode, stderr=stderr, stdout=stdout)
+        failure = GogPermissionError(returncode, stderr=stderr, stdout=stdout)
+        failure.http_status = _http_status_from_text(stderr) or (
+            returncode if returncode in range(400, 600) else None
+        )
+        return failure
+    if _looks_like_transient(stderr.casefold()):
+        return GogTransientError(
+            "request", "server_error", 1, _http_status_from_text(stderr), returncode
+        )
     if returncode != 0:
-        return subprocess.CalledProcessError(returncode, [], output=stdout, stderr=stderr)
+        failure = subprocess.CalledProcessError(returncode, [], output="", stderr="")
+        failure.http_status = _http_status_from_text(stderr)
+        return failure
     return None
 
 
 def run_gog(
     command: Sequence[str],
     *,
-    max_attempts: int = 5,
+    operation: str = "request",
+    retry_safe: bool = False,
+    timeout_seconds: int = 60,
+    max_attempts: int = 3,
     base_delay_seconds: float = 1.0,
-    max_delay_seconds: float = 60.0,
+    max_delay_seconds: float = 30.0,
 ) -> subprocess.CompletedProcess[str]:
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
 
     last_error: subprocess.CalledProcessError | None = None
     for attempt in range(max_attempts):
-        result = subprocess.run(
-            list(command),
-            capture_output=True,
-            check=False,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                list(command),
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            if not retry_safe or attempt == max_attempts - 1:
+                raise GogTransientError(operation, "timeout", attempt + 1) from None
+            _sleep_before_retry(attempt, base_delay_seconds, max_delay_seconds)
+            continue
+        except OSError:
+            raise GogExecutionError(operation) from None
         failure = classify_gog_failure(result.returncode, result.stdout, result.stderr)
         if failure is None:
             return result
 
-        if not isinstance(failure, GogRateLimitError) or attempt == max_attempts - 1:
+        transient = isinstance(failure, (GogRateLimitError, GogTransientError))
+        if not transient or not retry_safe or attempt == max_attempts - 1:
+            if isinstance(failure, GogTransientError):
+                raise GogTransientError(
+                    operation, failure.category, attempt + 1, failure.http_status, result.returncode
+                ) from None
+            if isinstance(failure, GogRateLimitError):
+                failure.operation = operation
+                failure.attempts = attempt + 1
+                failure.http_status = _http_status_from_text(result.stderr)
+            elif isinstance(failure, GogPermissionError):
+                failure.operation = operation
+            else:
+                failure.operation = operation
             raise failure
-
-        delay = min(
-            max_delay_seconds,
-            base_delay_seconds * (2**attempt) + random.uniform(0, 0.5),
-        )
-        retry_after = parse_retry_after_seconds(f"{result.stdout}\n{result.stderr}")
-        if retry_after is not None:
-            delay = max(delay, float(retry_after))
-        time.sleep(delay)
+        if isinstance(failure, GogRateLimitError):
+            retry_after = parse_retry_after_seconds(f"{result.stdout}\n{result.stderr}")
+        else:
+            retry_after = None
+        _sleep_before_retry(attempt, base_delay_seconds, max_delay_seconds, retry_after)
         last_error = failure
 
     if last_error is not None:
         raise last_error
     raise RuntimeError("run_gog finished without a result")
+
+
+def _sleep_before_retry(
+    attempt: int,
+    base_delay_seconds: float,
+    max_delay_seconds: float,
+    retry_after: int | None = None,
+) -> None:
+    delay = min(max_delay_seconds, base_delay_seconds * (2**attempt) + random.uniform(0, 0.5))
+    if retry_after is not None:
+        delay = min(max_delay_seconds, max(delay, float(retry_after)))
+    time.sleep(delay)
+
+
+def _looks_like_transient(stderr: str) -> bool:
+    http_status = _http_status_from_text(stderr)
+    if http_status is not None:
+        return http_status >= 500
+    return bool(
+        re.search(r"(?:http(?:/\d(?:\.\d)?)?\s+|status(?:\s+code)?[:= ]+)(5\d\d)", stderr)
+    ) or any(marker in stderr for marker in TRANSIENT_MARKERS)
 
 
 def parse_retry_after_seconds(text: str) -> int | None:
@@ -179,3 +283,12 @@ def record_digest_send(path: str, report_day: str, sent_at: str) -> None:
         json.dumps({"sends": sends}, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _http_status_from_text(text: str) -> int | None:
+    match = re.search(
+        r"(?:http(?:/\d(?:\.\d)?)?\s+|status(?:\s+code)?[:= ]+|googleapi:\s*error\s+)([45]\d\d)\b",
+        text,
+        re.I,
+    )
+    return int(match.group(1)) if match else None
