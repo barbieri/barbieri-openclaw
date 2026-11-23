@@ -15,8 +15,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from daily_calendar.email import compose_report_markdown, markdown_to_html, markdown_to_plain
 from daily_calendar.gog import (
     CALENDAR_EVENT_FIELDS,
+    GogExecutionError,
     GogPermissionError,
     GogRateLimitError,
+    GogTransientError,
     load_send_state,
     record_digest_send,
     run_gog,
@@ -35,11 +37,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return run(argv)
     except GogRateLimitError as exc:
-        print(f"daily-calendar: Google rate limit from gog: {exc.stderr.strip()}", file=sys.stderr)
+        details = _gog_error_details(exc)
+        print(
+            f"daily-calendar: gog {exc.operation} hit a rate limit after "
+            f"{exc.attempts} attempts ({details})",
+            file=sys.stderr,
+        )
         return 1
     except GogPermissionError as exc:
-        message = exc.stderr.strip()
-        print(f"daily-calendar: Google permission error from gog: {message}", file=sys.stderr)
+        print(
+            f"daily-calendar: gog {exc.operation} permission denied ({_gog_error_details(exc)})",
+            file=sys.stderr,
+        )
+        return 1
+    except GogTransientError as exc:
+        print(f"daily-calendar: {exc}", file=sys.stderr)
+        return 1
+    except GogExecutionError as exc:
+        print(f"daily-calendar: {exc}", file=sys.stderr)
         return 1
     except (
         OSError,
@@ -48,6 +63,14 @@ def main(argv: list[str] | None = None) -> int:
         ZoneInfoNotFoundError,
         subprocess.CalledProcessError,
     ) as exc:
+        if isinstance(exc, subprocess.CalledProcessError):
+            operation = getattr(exc, "operation", "request")
+            print(
+                f"daily-calendar: gog {operation} failed ({_gog_error_details(exc)}); "
+                "provider output was redacted",
+                file=sys.stderr,
+            )
+            return 1
         print(f"daily-calendar: {exc}", file=sys.stderr)
         return 1
 
@@ -317,7 +340,9 @@ def fetch_calendar_events(
             "--all-pages",
             "--no-input",
             "--json",
-        ]
+        ],
+        operation="calendar events",
+        retry_safe=True,
     )
     return parse_calendar_response(result.stdout)
 
@@ -415,4 +440,12 @@ def send_email(
     if dry_run:
         command.insert(3, "--dry-run")
 
-    run_gog(command)
+    run_gog(command, operation="gmail send", retry_safe=False)
+
+
+def _gog_error_details(error: subprocess.CalledProcessError) -> str:
+    details = [f"exit code {error.returncode}"]
+    http_status = getattr(error, "http_status", None)
+    if http_status is not None:
+        details.append(f"HTTP {http_status}")
+    return ", ".join(details)

@@ -10,6 +10,24 @@ No account aliases, email addresses, passwords, or host-specific paths are hardc
 Calendar collection requests the selected event fields under `items(...)` in the
 Google Calendar list response and retains `nextPageToken` for complete pagination.
 
+## Service errors and retries
+
+Each `gog` command has a 60-second timeout. Calendar event reads retry up to three
+times for timeouts, Google rate limits, and recognized temporary server errors.
+Retries use bounded exponential backoff with jitter and honor `Retry-After` up to
+30 seconds per delay. Permission errors and other unclassified failures are not
+retried.
+
+Gmail sends are never retried automatically, including after a timeout. The
+provider may have accepted a message before the client timed out, so retrying
+could send a duplicate.
+
+Failure messages identify the operation and attempt count, plus the local process
+exit code and an HTTP status when `gog` reports one explicitly. Provider output,
+command arguments, and report content are omitted from the CLI error. For an
+unclassified provider failure, use the account alias, operation, and time of the
+failure to investigate the corresponding `gog` or Google account logs locally.
+
 ## Generate A Report
 
 ```bash
